@@ -65,11 +65,6 @@ if [ ! -x "${PGADMIN_VENV}/bin/pgadmin4" ]; then
 	exit 0
 fi
 
-if curl -sf -o /dev/null "http://127.0.0.1:${PGADMIN_PORT}/login" 2>/dev/null; then
-	log "pgAdmin 4 is already running on port ${PGADMIN_PORT}."
-	exit 0
-fi
-
 # Bind to 0.0.0.0 so the Codespaces port forwarder can reach it.
 export CONFIG_DISTRO_FILE_PATH="${PGADMIN_CONFIG_FILE}"
 export PGADMIN_CONFIG_DEFAULT_SERVER="0.0.0.0"
@@ -84,18 +79,34 @@ mkdir -p "${PGADMIN_DATA_DIR}" 2>/dev/null || true
 
 # pgAdmin aborts immediately if CONFIG_DISTRO_FILE_PATH points at a file that
 # does not exist, so make sure the config is there before starting the server.
-# The file must match the one written by setup.sh.
-if [ ! -f "${PGADMIN_CONFIG_FILE}" ]; then
-	log "Writing the pgAdmin configuration file..."
-	cat > "${PGADMIN_CONFIG_FILE}" <<'PYCONFIG'
+# The file is rewritten on every start instead of only when it is missing, so
+# that it always matches this script: a Codespace that was built before a
+# setting changed would otherwise keep running with the stale file. See the
+# comment in setup.sh for why the CSRF and cookie-protection settings are off.
+log "Writing the pgAdmin configuration file..."
+cat > "${PGADMIN_CONFIG_FILE}" <<'PYCONFIG'
 HELP_PATH = '../../docs/en_US/_build/html/'
 MINIFY_HTML = False
 DATA_DIR = '/var/lib/pgadmin'
 DEFAULT_SERVER = '0.0.0.0'
 DEFAULT_SERVER_PORT = 5050
+WTF_CSRF_ENABLED = False
+ENHANCED_COOKIE_PROTECTION = False
 UPGRADE_CHECK_ENABLED = False
 PYCONFIG
-	chown "$(pgadmin_owner)" "${PGADMIN_CONFIG_FILE}" 2>/dev/null || true
+chown "$(pgadmin_owner)" "${PGADMIN_CONFIG_FILE}" 2>/dev/null || true
+
+# pgAdmin reads its settings once, when it starts, so a server that is already
+# running has to be restarted to pick up the file written above. This is the
+# path a student uses to repair an environment that was built before the
+# settings existed.
+if curl -sf -o /dev/null "http://127.0.0.1:${PGADMIN_PORT}/login" 2>/dev/null; then
+	log "Restarting pgAdmin 4 so it picks up the current configuration..."
+	pkill -f "${PGADMIN_VENV}/bin/pgadmin4" 2>/dev/null || true
+	for _ in $(seq 1 15); do
+		curl -sf -o /dev/null "http://127.0.0.1:${PGADMIN_PORT}/login" 2>/dev/null || break
+		sleep 1
+	done
 fi
 
 log "Starting pgAdmin 4 on port ${PGADMIN_PORT}..."

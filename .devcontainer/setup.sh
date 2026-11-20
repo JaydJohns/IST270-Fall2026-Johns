@@ -213,6 +213,34 @@ sudo chown -R "$(pgadmin_owner)" "${PGADMIN_DATA_DIR}" 2>/dev/null || true
 # Codespaces port forwarder. This config file overrides the listen address and
 # keeps every pgAdmin file inside DATA_DIR.
 #
+# WTF_CSRF_ENABLED = False disables Flask-WTF's CSRF protection for pgAdmin.
+#
+# Why: pgAdmin's browser UI obtains its CSRF token from a separate request to
+# /browser/js/utils.js and echoes it back in an X-pgA-CSRFToken header on
+# every API call. Behind the Codespaces port-forwarding proxy that round trip
+# intermittently loses the token, and pgAdmin then rejects EVERY API call with
+# HTTP 401 "The CSRF token is missing" - which leaves the student staring at a
+# blank page with a broken object browser. Reproduced in a live Codespace:
+# /preferences/get_all answered {"success":0,"errormsg":"The CSRF token is
+# missing..."} while the SPA shell and its JavaScript bundles answered 200.
+#
+# ENHANCED_COOKIE_PROTECTION = False disables flask-paranoid, which hashes the
+# client IP (taken from the X-Forwarded-For header) and the User-Agent into
+# the session token. The Codespaces proxy presents a different client IP from
+# one request to the next, so the token mismatched, the session was thrown
+# away, and pgAdmin bounced the browser back to the login page. pgAdmin's own
+# documentation recommends turning this off when it runs behind a load
+# balancer or a proxy.
+#
+# The trade is acceptable for this environment. pgAdmin runs inside the
+# student's own Codespace on a private forwarded port that only they (and the
+# organisation admins) can reach, the session cookie is still SameSite=Lax so
+# a third-party site cannot ride the session, and the student can already run
+# arbitrary SQL against their own database. The reliability gain for a
+# beginner-facing environment is worth more here than the CSRF check.
+#
+# To restore the checks later, delete the two lines below and restart pgAdmin.
+#
 # UPGRADE_CHECK_ENABLED = False stops pgAdmin from polling pgadmin.org for a
 # newer release. Without it, every student sees a banner saying "You are
 # currently running version 9.18 ... however the current version is 9.19",
@@ -226,6 +254,8 @@ MINIFY_HTML = False
 DATA_DIR = '/var/lib/pgadmin'
 DEFAULT_SERVER = '0.0.0.0'
 DEFAULT_SERVER_PORT = 5050
+WTF_CSRF_ENABLED = False
+ENHANCED_COOKIE_PROTECTION = False
 UPGRADE_CHECK_ENABLED = False
 PYCONFIG
 chown "$(pgadmin_owner)" "${PGADMIN_CONFIG_FILE}" 2>/dev/null || true
